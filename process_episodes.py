@@ -1,7 +1,5 @@
-from langchain_ollama import ChatOllama
 import cv2
 import numpy as np
-import os
 import yt_dlp
 import os
 os.environ["OLLAMA_HOST"] = "http://192.168.1.221:11434"
