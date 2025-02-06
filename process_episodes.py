@@ -1,99 +1,89 @@
 import cv2
 import numpy as np
 import yt_dlp
-import os
-os.environ["OLLAMA_HOST"] = "http://192.168.1.221:11434"
-# os.environ['TESSDATA_PREFIX'] = "/opt/homebrew/share/tessdata/"
-# import pytesseract
-# pytesseract.pytesseract.tesseract_cmd = '/opt/homebrew/bin/tesseract'
 import easyocr
+import os
+from pprint import pprint
+import asyncio
+import glob
+from database import initialize_database, save_to_database
 
 # Download YouTube video
 def download_youtube_video(video_url, save_path="."):
     try:
         ydl_opts = {
             'outtmpl': f'{save_path}/%(title)s.%(ext)s',
-            'format': 'best'
+            'format': 'best',
+            'quiet': True, 
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(video_url, download=False)  # Get metadata without downloading
             file_path = ydl.prepare_filename(info_dict)  # Prepare the file path based on the template
             ydl.download([video_url]) # Download the video
-            return file_path
+            return os.path.dirname(file_path)
     except: # age restrictions
         ydl_opts = {
             'outtmpl': f'{save_path}/%(title)s.%(ext)s',
             'format': 'best',
+            'quiet': True, 
             'cookiesfrombrowser': ('chrome',) # using cookies from chrome to prevent age restrictions
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info_dict = ydl.extract_info(video_url, download=False)  # Get metadata without downloading
             file_path = ydl.prepare_filename(info_dict)  # Prepare the file path based on the template
             ydl.download([video_url]) # Download the video
-            return file_path
+            return os.path.dirname(file_path)
 
-# Get screenshots by episodes and timecodes
+
+DB_PATH = "scene_caption_correspondence.db"
+
+reader = easyocr.Reader(['ch_tra', 'en'])
 def has_subtitles(frame):
-    """ Extracts text from the frame and checks if subtitles exist. """
-    reader = easyocr.Reader(['ch_tra', 'ch_sim', 'en', 'ja', 'ko'])
-    results = reader.readtext(frame)
+    """Extracts text from the frame and checks if subtitles exist."""
+    results = reader.readtext(frame, batch_size=5)
 
     # If text is detected, return it as a string
     if results:
-        return "".join([text for (_, text, _) in results])
+        return " ".join([text for (_, text, _) in results])  # Join detected text
     return ""
 
-def extract_subtitle_frames_by_seconds(video_path, fps=30):
-    """
-    Extracts frames with subtitles from the video and saves them in a folder 
-    named after the video file (without extension).
-
-    Args:
-        video_path (str): Path to the video file.
-        fps (int): Frames per second of the video (default is 30 FPS).
-    """
-    # Extract the directory and filename (without extension) from the video path
-    video_dir = os.path.dirname(video_path)
+async def process_video(video_path, output_dir):
+    """Extracts frames with subtitles asynchronously from a video file."""
     video_name = os.path.splitext(os.path.basename(video_path))[0]
-    
-    # Create a folder with the video name in the same directory as the video
-    output_folder = os.path.join(video_dir, video_name)
+    initialize_database(DB_PATH, video_name)
+
+    output_folder = os.path.join(output_dir, video_name)
     os.makedirs(output_folder, exist_ok=True)
 
-    # Open the video file
     cap = cv2.VideoCapture(video_path)
-    frame_count = 0
-    screenshot_count = 0
-    last_saved_second = -1  # Initialize to ensure the first second can be saved
+    fps = int(cap.get(cv2.CAP_PROP_FPS)) or 1  # Frames per second (avoid division by zero)
+    duration = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) / fps)  # Video duration in seconds
+    zeros = len(str(duration))  # Padding for filenames
 
-    prev_frame_caption = ""
+    frame_count = 0
+
     while cap.isOpened():
-        ret, frame = cap.read()
+        ret, frame = await asyncio.to_thread(cap.read)  # Read frame asynchronously
         if not ret:
             break
 
-        # Calculate the current time in seconds
-        current_second = int(frame_count / fps)
-
-        # Process only if the frame has subtitles and is at least 1 second from the last saved second
-        caption = has_subtitles(frame)
-        if prev_frame_caption != caption and caption and current_second > last_saved_second:
-            # Save the frame using the second as part of the filename
-            screenshot_filename = os.path.join(output_folder, f'screenshot_{current_second}s_{caption}.png')
-            cv2.imwrite(screenshot_filename, frame)
-            print(f"Saved: {screenshot_filename}")
-            screenshot_count += 1
-            last_saved_second = current_second  # Update the last saved second
-        prev_frame_caption = caption
+        if frame_count % fps == 0:  # Capture every second
+            subtitle_text = await asyncio.to_thread(has_subtitles, frame)  # Process subtitles asynchronously
+            if subtitle_text:  # Save frame only if it has subtitles
+                screenshot_filename = os.path.join(output_folder, f'screenshot_{frame_count // fps:0{zeros}d}s.png')
+                await asyncio.to_thread(cv2.imwrite, screenshot_filename, frame)
+                await save_to_database("scene_caption_correspondence", screenshot_filename, subtitle_text, video_name)  # Save to DB
+                print(f"Saved: {screenshot_filename} (Subtitles: {subtitle_text})")
 
         frame_count += 1
 
     cap.release()
-    cv2.destroyAllWindows()
-    print(f"Total frames processed: {frame_count}")
-    print(f"Total screenshots taken: {screenshot_count}")
-    print(f"Screenshots saved in folder: {output_folder}")
 
+async def process_directory(video_dir, output_dir):
+    """Finds all video files in a directory and processes them concurrently."""
+    video_files = glob.glob(os.path.join(video_dir, "*.mp4"))  # Adjust extension if needed
+    tasks = [process_video(video_path, output_dir) for video_path in video_files]
+    await asyncio.gather(*tasks)  # Run tasks concurrently
 
 # Screenshot contexts (conversation coherency)
 def build_context_dict(directory):
@@ -115,11 +105,10 @@ def build_context_dict(directory):
 
 # Example usage
 if __name__ == '__main__':
-    # video_url = "https://youtu.be/ijdspfPMzYc?si=D6HI24XkMA0StZC4"  # Replace with the YouTube video URL
-    # save_path = "./MyGo"  # Replace with the directory where you want to save the video
-    # if not os.path.exists(save_path):
-    #     os.makedirs(save_path)
-    # video_path = download_youtube_video(video_url, save_path)
-    video_path = "./MyGo/BanG Dream! It's MyGO!!!!! 第04話【一輩子喔！？】｜Muse木棉花 動畫 線上看.mp4"
-    print(video_path)
-    extract_subtitle_frames_by_seconds(video_path)
+    video_url = "https://youtu.be/ijdspfPMzYc?si=D6HI24XkMA0StZC4"  # Replace with the YouTube video URL
+    save_path = "./MyGo/"  # Replace with the directory where you want to save the video
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    video_path = download_youtube_video(video_url, save_path)
+    video_path = "./MyGo/"
+    asyncio.run(process_directory(video_path, save_path))
