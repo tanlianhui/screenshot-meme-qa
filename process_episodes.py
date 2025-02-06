@@ -6,7 +6,7 @@ import os
 from pprint import pprint
 import asyncio
 import glob
-from database import initialize_database, save_to_database
+from database import initialize_database, save_to_database, get_or_create_video_id
 
 # Download YouTube video
 def download_youtube_video(video_url, save_path="."):
@@ -36,6 +36,7 @@ def download_youtube_video(video_url, save_path="."):
 
 
 DB_PATH = "scene_caption_correspondence.db"
+initialize_database(DB_PATH)
 
 reader = easyocr.Reader(['ch_tra', 'en'])
 def has_subtitles(frame):
@@ -50,7 +51,7 @@ def has_subtitles(frame):
 async def process_video(video_path, output_dir):
     """Extracts frames with subtitles asynchronously from a video file."""
     video_name = os.path.splitext(os.path.basename(video_path))[0]
-    initialize_database(DB_PATH, video_name)
+    video_id = get_or_create_video_id(DB_PATH, video_name)  # Get unique ID for this video
 
     output_folder = os.path.join(output_dir, video_name)
     os.makedirs(output_folder, exist_ok=True)
@@ -72,7 +73,7 @@ async def process_video(video_path, output_dir):
             if subtitle_text:  # Save frame only if it has subtitles
                 screenshot_filename = os.path.join(output_folder, f'screenshot_{frame_count // fps:0{zeros}d}s.png')
                 await asyncio.to_thread(cv2.imwrite, screenshot_filename, frame)
-                await save_to_database("scene_caption_correspondence", screenshot_filename, subtitle_text, video_name)  # Save to DB
+                await save_to_database(DB_PATH, screenshot_filename, subtitle_text, video_id)  # Save to DB
                 print(f"Saved: {screenshot_filename} (Subtitles: {subtitle_text})")
 
         frame_count += 1
@@ -105,10 +106,10 @@ def build_context_dict(directory):
 
 # Example usage
 if __name__ == '__main__':
-    video_url = "https://youtu.be/ijdspfPMzYc?si=D6HI24XkMA0StZC4"  # Replace with the YouTube video URL
+    # video_url = "https://youtu.be/ijdspfPMzYc?si=D6HI24XkMA0StZC4"  # Replace with the YouTube video URL
     save_path = "./MyGo/"  # Replace with the directory where you want to save the video
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
-    video_path = download_youtube_video(video_url, save_path)
+    # if not os.path.exists(save_path):
+    #     os.makedirs(save_path)
+    # video_path = download_youtube_video(video_url, save_path)
     video_path = "./MyGo/"
     asyncio.run(process_directory(video_path, save_path))
