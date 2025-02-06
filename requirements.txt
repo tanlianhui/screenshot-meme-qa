@@ -42,7 +42,7 @@ pure_eval==0.2.3
 pydantic==2.10.6
 pydantic_core==2.27.2
 Pygments==2.19.1
-pytesseract==0.3.13
+# pytesseract==0.3.13
 python-dateutil==2.9.0.post0
 pytube==15.0.0
 PyYAML==6.0.2
@@ -61,3 +61,4 @@ urllib3==2.3.0
 wcwidth==0.2.13
 yt-dlp==2025.1.26
 zstandard==0.23.0
+easyocr==1.7.2
