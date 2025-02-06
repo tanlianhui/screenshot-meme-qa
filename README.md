@@ -6,9 +6,3 @@ Instructions:
 
 Prerequisites:
 1. Python 3.10
-2. tesseract
-    * Windows: Go to https://github.com/tesseract-ocr/tesseract
-    * macOS: `brew install tesseract`
-    * Linux: ```sudo apt update
-                sudo apt install tesseract-ocr
-             ```
