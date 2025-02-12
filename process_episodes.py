@@ -6,7 +6,8 @@ import os
 from pprint import pprint
 import asyncio
 import glob
-from database import initialize_database, save_to_database, get_or_create_video_id
+from database import initialize_image_database, get_or_insert_video_id, save_images_captions
+from time import time
 
 # Download YouTube video
 def download_youtube_video(video_url, save_path="."):
@@ -35,8 +36,7 @@ def download_youtube_video(video_url, save_path="."):
             return os.path.dirname(file_path)
 
 
-DB_PATH = "scene_caption_correspondence.db"
-initialize_database(DB_PATH)
+initialize_image_database()
 
 reader = easyocr.Reader(['ch_tra', 'en'])
 def has_subtitles(frame):
@@ -51,7 +51,7 @@ def has_subtitles(frame):
 async def process_video(video_path, output_dir):
     """Extracts frames with subtitles asynchronously from a video file."""
     video_name = os.path.splitext(os.path.basename(video_path))[0]
-    video_id = get_or_create_video_id(DB_PATH, video_name)  # Get unique ID for this video
+    video_id = get_or_insert_video_id(video_path)
 
     output_folder = os.path.join(output_dir, video_name)
     os.makedirs(output_folder, exist_ok=True)
@@ -63,6 +63,7 @@ async def process_video(video_path, output_dir):
 
     frame_count = 0
 
+    image_data = []
     while cap.isOpened():
         ret, frame = await asyncio.to_thread(cap.read)  # Read frame asynchronously
         if not ret:
@@ -73,10 +74,12 @@ async def process_video(video_path, output_dir):
             if subtitle_text:  # Save frame only if it has subtitles
                 screenshot_filename = os.path.join(output_folder, f'screenshot_{frame_count // fps:0{zeros}d}s.png')
                 await asyncio.to_thread(cv2.imwrite, screenshot_filename, frame)
-                await save_to_database(DB_PATH, screenshot_filename, subtitle_text, video_id)  # Save to DB
+                image_data.append((screenshot_filename, subtitle_text, video_id))
                 print(f"Saved: {screenshot_filename} (Subtitles: {subtitle_text})")
 
         frame_count += 1
+
+    save_images_captions(image_data)
 
     cap.release()
 
@@ -112,4 +115,6 @@ if __name__ == '__main__':
     #     os.makedirs(save_path)
     # video_path = download_youtube_video(video_url, save_path)
     video_path = "./MyGo/"
+    start = time()
     asyncio.run(process_directory(video_path, save_path))
+    print(time()-start)
